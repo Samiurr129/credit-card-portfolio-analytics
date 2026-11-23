@@ -1,71 +1,120 @@
-# 💳 Credit Card Default Prediction & Portfolio Risk Segmentation
+# Credit card default prediction and portfolio risk segmentation
 
-> **An end-to-end Cards portfolio analytics case study** — combining SQL, Python, Power BI, and Excel to predict customer default risk, segment the portfolio, and propose data-driven Risk Appetite Metrics.
+An end-to-end card portfolio analytics case study. It uses SQL, Python and Excel to monitor portfolio KPIs, predict next-month default, split customers into risk tiers and suggest risk appetite metrics.
 
-![Python](https://img.shields.io/badge/Python-3.10-blue?logo=python&logoColor=white)
-![SQL](https://img.shields.io/badge/SQL-PostgreSQL-336791?logo=postgresql&logoColor=white)
-![Power BI](https://img.shields.io/badge/Power%20BI-Dashboard-F2C811?logo=powerbi&logoColor=black)
-![Excel](https://img.shields.io/badge/Excel-MI%20Pack-217346?logo=microsoftexcel&logoColor=white)
-![Status](https://img.shields.io/badge/Status-Complete-success)
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)
+![SQL](https://img.shields.io/badge/SQL-SQLite-003B57?logo=sqlite&logoColor=white)
+![Excel](https://img.shields.io/badge/Excel-MI%20pack-217346?logo=microsoftexcel&logoColor=white)
+![Licence](https://img.shields.io/badge/licence-MIT-green)
 
----
+Every number in this README comes from the notebooks in this repo and can be reproduced.
 
-## 📌 Project Overview
+## Business problem
 
-This project simulates the work of a **Portfolio Analytics team** in a consumer-lending bank. Using a real-world dataset of **30,000 credit-card customers**, I built a full analytics pipeline covering:
+A consumer lender wants to:
 
-- **Performance monitoring** (KPIs, default rates, utilisation, delinquency)
-- **Predictive modelling** (default probability)
-- **Customer segmentation** (risk tiers via clustering)
-- **MI reporting** (Power BI dashboard + Excel pack + Executive PowerPoint)
-- **Risk Appetite recommendations** (data-led thresholds for portfolio strategy)
+1. **Monitor** the performance of its card portfolio.
+2. **Predict** which customers are likely to default next month.
+3. **Segment** customers into risk tiers for credit-limit and collections strategy.
+4. **Report** the findings clearly to non-technical stakeholders.
 
-The goal: **demonstrate how an analyst can turn raw portfolio data into actionable insights that influence credit strategy, balance risk and reward, and keep the customer at the heart of decisions.**
+## Data
 
----
+[UCI Default of Credit Card Clients](https://archive.ics.uci.edu/dataset/350/default+of+credit+card+clients) (Yeh and Lien, 2009), licensed CC BY 4.0.
 
-## 🎯 Business Problem
+- 30,000 card holders of a bank in Taiwan.
+- Six months of history, April to September 2005. Amounts are in New Taiwan dollars (NT$).
+- The target is default in October 2005. The portfolio default rate is **22.1%**.
+- Features: credit limit, age, education, monthly repayment status, bill amounts and payments.
 
-A consumer-lending bank needs to:
+Cleaning (`src/prepare_data.py`): undocumented education and marital codes are grouped into "other", `PAY_0` is renamed `PAY_1`, and four behaviour features are added. These are utilisation, months late in six, worst arrears in six and the payment-to-bill ratio.
 
-1. **Monitor** the performance of its credit-card portfolio.
-2. **Predict** which customers are likely to default in the next month.
-3. **Segment** customers into risk tiers to inform credit-limit and collections strategy.
-4. **Communicate** insights clearly to senior, non-technical stakeholders.
+## Key findings
 
----
+| Finding | Evidence |
+| --- | --- |
+| Arrears are the strongest warning sign | 69.6% of customers two or more months behind in September defaulted, against 13.8% of those not behind (5.0x) |
+| Utilisation matters, but much less | Default rises from 18.3% below 30% utilisation to 30.1% above 100% |
+| XGBoost is the best of three models | Test ROC-AUC 0.781, against 0.775 for random forest and 0.746 for logistic regression |
+| One tier carries most of the loss | Tier 4 holds 24.0% of customers and 61.9% of the balance of customers who defaulted |
 
-## 📂 Dataset
+## Method
 
-**Source:** UCI Machine Learning Repository — *Default of Credit Card Clients Dataset*
+### 1. SQL KPI layer
 
-- **Size:** 30,000 customers, 24 features
-- **Period:** 6 months of payment history
-- **Target Variable:** `default.payment.next.month` (1 = default, 0 = no default)
-- **Features include:** credit limit, demographics (age, sex, education, marital status), past-payment status (PAY_0 to PAY_6), bill amounts, and previous payments
+`sql/02_portfolio_kpis.sql` runs against a SQLite copy of the data. It covers:
 
----
+- portfolio overview: customers, default rate, limits, balances, utilisation
+- default rate by utilisation band, September arrears status and age band
+- August to September arrears roll rates (window function)
+- balance share and cumulative share by credit-limit band (window functions)
 
-## 🛠️ Tech Stack
+### 2. Exploratory analysis
 
-| Layer | Tools |
-|---|---|
-| **Data Storage & Querying** | PostgreSQL, SQLite, SQL |
-| **Data Analysis & Modelling** | Python (Pandas, NumPy, Scikit-learn, XGBoost, SHAP) |
-| **Visualisation** | Power BI, Matplotlib, Seaborn |
-| **Reporting** | Microsoft Excel (Pivot Tables, Power Query), PowerPoint |
-| **Version Control** | Git, GitHub |
+`notebooks/01_EDA.ipynb` charts the KPIs and the correlation of behaviour features with default.
 
----
+![Default rate by arrears status](images/default_rate_by_status.png)
 
-## 📁 Repository Structure
+### 3. Default prediction
+
+`notebooks/02_default_prediction.ipynb` compares three models on the same stratified 80/20 split. Sex is left out because UK and EU law bars pricing credit on it. Marital status is left out as a fairness precaution. The F1-best threshold is chosen on out-of-fold training predictions, so the test set is never used for tuning.
+
+| Model | Threshold | ROC-AUC | Precision | Recall | F1 |
+| --- | --- | --- | --- | --- | --- |
+| Logistic regression | 0.50 | 0.746 | 0.644 | 0.300 | 0.409 |
+| Random forest | 0.50 | 0.775 | 0.654 | 0.358 | 0.463 |
+| **XGBoost** | 0.50 | **0.781** | 0.669 | 0.361 | 0.469 |
+| **XGBoost** | 0.28 (F1-best) | **0.781** | 0.517 | 0.567 | 0.541 |
+
+At the 0.5 cut-off, the models catch only about a third of defaulters. Lowering the threshold to 0.28 raises XGBoost recall to 57% at the cost of precision. That trade-off is a business decision about the cost of a missed default against a false alarm.
+
+![ROC curves](images/roc_curves.png)
+
+### 4. Explainability with SHAP
+
+SHAP values show what drives the XGBoost predictions. In order of mean impact:
+
+1. September repayment status (`PAY_1`)
+2. Worst arrears in the last six months
+3. Number of months late in the last six
+4. Utilisation
+5. September bill amount and credit limit
+
+![SHAP summary](images/shap_summary.png)
+
+### 5. Risk segmentation
+
+`notebooks/03_risk_segmentation.ipynb` runs K-Means on five behaviour features and ranks the four clusters by observed default rate. Four clusters were chosen for business use. The silhouette score is slightly higher at three, and the notebook shows that trade-off.
+
+| Tier | Share of customers | Default rate | Mean model PD | Profile | Suggested action |
+| --- | --- | --- | --- | --- | --- |
+| Tier 1, low | 22.3% | 8.1% | 8.7% | High limits, moderate use, rarely late | Eligible for limit increases |
+| Tier 2, moderate | 23.6% | 14.0% | 13.8% | Lower limits, 85% utilisation, not late | Monitor utilisation |
+| Tier 3, elevated | 30.2% | 17.1% | 16.9% | Very low balances, pays most of each bill | Light-touch engagement |
+| Tier 4, high | 24.0% | 49.5% | 49.2% | Lower limits, about three late months in six | Early collections contact, limit review |
+
+![Risk tiers](images/risk_segments.png)
+
+### 6. Candidate risk appetite metrics
+
+| Metric | Share of customers | Default rate |
+| --- | --- | --- |
+| Utilisation at or above 80% | 26.6% | 26.7% |
+| Two or more months in arrears (September) | 10.4% | 69.6% |
+| Customers in Tier 4 | 24.0% | 49.5% |
+
+### 7. Excel MI pack
+
+`src/build_mi_pack.py` writes `excel/portfolio_mi_pack.xlsx`. It has nine sheets: overview, risk tiers, defaulted balance, the KPI breakdowns, risk appetite and model results. Default-rate columns carry a red-amber-green colour scale.
+
+## Repository structure
 
 ```
 credit-card-portfolio-analytics/
-│
-├── README.md
 ├── data/
-│   └── credit_card_clients.csv
+│   ├── raw/default_of_credit_card_clients.csv     # UCI data, converted from .xls
+│   ├── clean/credit_card_clients_clean.csv        # written by src/prepare_data.py
+│   └── output/                                    # PD scores, tiers, model results
 ├── sql/
 │   ├── 01_create_tables.sql
 │   ├── 02_portfolio_kpis.sql
@@ -73,185 +122,52 @@ credit-card-portfolio-analytics/
 ├── notebooks/
 │   ├── 01_EDA.ipynb
 │   ├── 02_default_prediction.ipynb
-│   └── 03_risk_segmentation.ipynb
-├── excel/
-│   └── Portfolio_MI_Dashboard.xlsx
-├── powerbi/
-│   └── Cards_Portfolio_Dashboard.pbix
-├── presentation/
-│   └── Executive_Summary.pptx
-└── images/
-    ├── powerbi_dashboard.png
-    ├── shap_summary.png
-    └── risk_segments.png
+│   ├── 03_risk_segmentation.ipynb
+│   └── src_py/                                    # plain-Python versions of the notebooks
+├── src/
+│   ├── prepare_data.py
+│   └── build_mi_pack.py
+├── excel/portfolio_mi_pack.xlsx
+├── images/
+└── requirements.txt
 ```
 
----
+## How to run
 
-## 🔍 Methodology
-
-### 1. SQL — Portfolio KPI Layer
-
-Built reusable SQL queries to compute key portfolio metrics directly from the database:
-
-- Overall **default rate** and trend over time
-- **Credit utilisation ratio** (bill amount / credit limit) by segment
-- **Delinquency roll-rates** (1 → 2 → 3 months past due)
-- **Vintage analysis** by demographic cohort
-- **Exposure at default** by risk band
-
-> 📄 See [`sql/02_portfolio_kpis.sql`](sql/02_portfolio_kpis.sql) for the full query suite.
-
-### 2. Exploratory Data Analysis (Python)
-
-- Distribution analysis across age, credit limit, and education
-- Correlation heatmap of all numerical features
-- Default-rate breakdown by demographic segment
-- Identified that **customers with 2+ months of late payment history show ~7x higher default probability**
-
-### 3. Predictive Modelling
-
-Built and compared three classification models:
-
-| Model | ROC-AUC | Precision | Recall |
-|---|---|---|---|
-| Logistic Regression | 0.72 | 0.68 | 0.34 |
-| Random Forest | 0.76 | 0.65 | 0.38 |
-| **XGBoost** | **0.78** | **0.69** | **0.41** |
-
-**XGBoost** was selected as the champion model based on overall AUC and recall on the default class.
-
-### 4. Explainability with SHAP
-
-Used **SHAP values** to interpret the XGBoost model's predictions — critical for credit-risk modelling under regulatory frameworks that require transparent, explainable lending decisions.
-
-**Top default drivers identified:**
-1. Most recent payment status (PAY_0)
-2. Credit utilisation ratio
-3. Past payment history (PAY_2, PAY_3)
-4. Age and credit limit
-
-![SHAP Summary](images/shap_summary.png)
-
-### 5. Customer Risk Segmentation
-
-Applied **K-Means clustering** to segment customers into 4 risk tiers:
-
-| Tier | % of Portfolio | Default Rate | Recommendation |
-|---|---|---|---|
-| **Tier 1 – Low Risk** | 38% | 6% | Eligible for credit-limit increases |
-| **Tier 2 – Moderate** | 31% | 14% | Maintain current limits, monitor |
-| **Tier 3 – Elevated** | 21% | 28% | Restrict utilisation, proactive engagement |
-| **Tier 4 – High Risk** | 10% | 52% | Early collections, limit reduction |
-
-### 6. MI Reporting Pack
-
-#### Power BI Dashboard
-Interactive dashboard built for senior stakeholders covering:
-- Portfolio at a glance (exposure, default rate, utilisation)
-- Trend analysis (default rate over time)
-- Demographic and risk-tier filters
-- Drill-through to customer-level views
-
-![Power BI Dashboard](images/powerbi_dashboard.png)
-
-#### Excel MI Pack
-- Variance analysis (actual default rate vs. forecast benchmark)
-- Pivot tables by demographic and risk tier
-- Conditional-formatted thresholds aligned to Risk Appetite
-
-#### Executive PowerPoint
-A 5-slide stakeholder-ready summary translating complex analytics into clear business actions.
-
----
-
-## 💡 Key Insights & Recommendations
-
-1. **Past payment behaviour is the single strongest predictor of future default** — supporting investment in early-warning indicators within the MI suite.
-2. **Tier 4 customers (10% of portfolio) drive 35%+ of total default exposure** — proactive collections strategy here delivers the highest ROI.
-3. **Credit utilisation above 80% correlates strongly with default** — a candidate Risk Appetite Metric for ongoing monitoring.
-4. **Education level shows surprising lift** — a feature worth integrating into next-generation scorecards.
-
----
-
-## 🎯 Skills Demonstrated
-
-- ✅ **SQL** — complex queries, CTEs, window functions, KPI computation
-- ✅ **Python** — Pandas, Scikit-learn, XGBoost, SHAP
-- ✅ **Statistical Modelling** — classification, evaluation, explainability
-- ✅ **Customer Segmentation** — K-Means clustering, risk-tier framework
-- ✅ **Power BI** — interactive, stakeholder-ready dashboards
-- ✅ **Advanced Excel** — pivot tables, Power Query, variance analysis
-- ✅ **Stakeholder Communication** — PowerPoint storytelling for non-technical audiences
-- ✅ **Risk & Compliance Awareness** — explainable AI, responsible-lending principles
-
----
-
-## 🚀 How to Run This Project
-
-### Prerequisites
-```
-Python 3.10+
-PostgreSQL 14+ (or SQLite)
-Power BI Desktop (free)
-Microsoft Excel
-```
-
-### Setup
 ```bash
-# Clone the repo
-git clone https://github.com/<your-username>/credit-card-portfolio-analytics.git
+git clone https://github.com/Samiurr129/credit-card-portfolio-analytics.git
 cd credit-card-portfolio-analytics
-
-# Install dependencies
 pip install -r requirements.txt
 
-# Load data into your database
-psql -U <user> -d <database> -f sql/01_create_tables.sql
+python src/prepare_data.py          # clean the data and build data/portfolio.db
+cd notebooks
+jupyter nbconvert --to notebook --execute --inplace 01_EDA.ipynb 02_default_prediction.ipynb 03_risk_segmentation.ipynb
+cd ..
+python src/build_mi_pack.py         # write the Excel MI pack
 ```
 
-### Run Notebooks
-```bash
-jupyter notebook notebooks/01_EDA.ipynb
-```
+Run the notebooks in order. Notebook 03 uses the PD scores written by notebook 02.
 
-### Open Dashboards
-- Power BI: open `powerbi/Cards_Portfolio_Dashboard.pbix`
-- Excel: open `excel/Portfolio_MI_Dashboard.xlsx`
+## Limitations
 
----
+- The data is from one Taiwanese bank in 2005. Results show the method, not current UK portfolio behaviour.
+- There are no account-opening dates, so vintage analysis is not possible.
+- In this file, the "1 month late" status almost never appears from April to August. Roll rates out of that bucket are not reliable.
+- The model was not tuned in depth or checked for fairness across age groups. Both would be needed before real use.
 
-## 📈 Future Enhancements
+## Future work
 
-- [ ] Integrate **IFRS 9 expected credit loss (ECL)** staging logic
-- [ ] Add a **Snowflake** layer to demonstrate cloud-warehouse querying
-- [ ] Build a **Streamlit web app** for interactive default-risk scoring
-- [ ] Implement **monitoring of model drift** with automated alerts
+- A Power BI dashboard built on the SQLite KPI layer
+- IFRS 9 expected credit loss staging
+- Fairness checks across age bands
+- A Streamlit app for scoring single customers
 
----
+## Author
 
-## 👤 About the Author
+**Samiur Rahman**, DBA candidate, University of Gloucestershire. Bradford, UK.
 
-**Samiur Rahman**
-Data & Portfolio Analytics | DBA Researcher | MSc Data Analytics
+[LinkedIn](https://www.linkedin.com/in/samiur-rahman29/) · [GitHub](https://github.com/Samiurr129)
 
-📍 Leeds, UK
-📧 srjobs129@gmail.com
-🔗 [LinkedIn](https://www.linkedin.com/) | [GitHub](https://github.com/)
+## Acknowledgements
 
-> *Currently undertaking a Doctorate in Business Administration with a research focus on data-driven decision-making in financial services.*
-
----
-
-## 📜 Licence
-
-This project is released under the MIT Licence — feel free to fork, adapt, and learn from it.
-
-## 🙏 Acknowledgements
-
-- **UCI Machine Learning Repository** — for the publicly available dataset
-- **Yeh, I. C., & Lien, C. H. (2009)** — original research paper introducing the dataset
-
----
-
-⭐ **If you found this project useful, please consider giving it a star!**
+Yeh, I. C. and Lien, C. H. (2009) 'The comparisons of data mining techniques for the predictive accuracy of probability of default of credit card clients', *Expert Systems with Applications*, 36(2), pp. 2473–2480.
